@@ -1,5 +1,4 @@
+Flask
 selenium
-pillow
-pytesseract
-reportlab
+Pillow
 gunicorn
