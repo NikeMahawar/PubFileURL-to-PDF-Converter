@@ -1,30 +1,33 @@
 #!/usr/bin/env python3
 """
-PubHTML5 Screenshot Utility
+PubHTML5 Book Downloader - Screenshot Only Version with Real-time Progress
 
-A tool to capture screenshots of PubHTML5 books.
+A tool to download PubHTML5 books using browser screenshots with live progress updates.
 """
 
 import argparse
 import base64
 import logging
 import os
-import random
 import sys
 import time
+import uuid
 from io import BytesIO
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from PIL import Image
-from flask import Flask, request, jsonify
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from flask import Flask, request, jsonify, send_file
 from threading import Thread
+import json
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("pubhtml5_screenshot.log"),
+        logging.FileHandler("pubhtml5_downloader.log"),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -44,41 +47,39 @@ try:
 
     SELENIUM_AVAILABLE = True
 except ImportError:
-    logger.warning("Selenium not available. Browser automation methods will be disabled.")
+    logger.error("Selenium not available. This tool requires Selenium to work.")
     SELENIUM_AVAILABLE = False
+    sys.exit(1)
+
+# Global dictionary to store download progress
+download_progress = {}
 
 
-class NetworkUtils:
-    """Utility class for network operations"""
+class BrowserExtractor:
+    """Extract book pages using browser automation with Selenium"""
 
-    USER_AGENTS = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    ]
-
-    @staticmethod
-    def get_random_user_agent() -> str:
-        """Get a random user agent string"""
-        return random.choice(NetworkUtils.USER_AGENTS)
-
-
-class BrowserCapture:
-    """Capture screenshots using browser automation with Selenium"""
-
-    def __init__(self, url: str, output_dir: str):
-        self.url = url
-        self.output_dir = output_dir
+    def __init__(self, book_url: str, temp_dir: str, session_id: str):
+        self.book_url = book_url
+        self.temp_dir = temp_dir
+        self.session_id = session_id
         self.driver = None
+
+    def update_progress(self, current_page: int, total_pages: int = None, status: str = ""):
+        """Update the progress for this session"""
+        global download_progress
+        download_progress[self.session_id] = {
+            'current_page': current_page,
+            'total_pages': total_pages,
+            'status': status,
+            'completed': False,
+            'error': False
+        }
 
     def setup_driver(self, headless: bool = True) -> bool:
         """Set up and configure Chrome WebDriver"""
-        if not SELENIUM_AVAILABLE:
-            logger.error("Selenium is not available. Cannot use browser automation.")
-            return False
-
         try:
+            self.update_progress(0, status="Initializing browser...")
+
             chrome_options = Options()
             if headless:
                 chrome_options.add_argument("--headless=new")
@@ -93,9 +94,6 @@ class BrowserCapture:
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option("useAutomationExtension", False)
-
-            # Random user agent
-            chrome_options.add_argument(f"--user-agent={NetworkUtils.get_random_user_agent()}")
 
             # Additional stability settings
             chrome_options.add_argument("--disable-extensions")
@@ -115,6 +113,7 @@ class BrowserCapture:
 
         except Exception as e:
             logger.error(f"Failed to initialize Chrome WebDriver: {str(e)}")
+            self.update_progress(0, status=f"Error initializing browser: {str(e)}")
             return False
 
     def find_book_element(self) -> Optional[webdriver.remote.webelement.WebElement]:
@@ -268,7 +267,7 @@ class BrowserCapture:
         logger.warning("All navigation methods failed")
         return False
 
-    def capture_screenshot(self, page_num: int) -> Optional[str]:
+    def capture_current_page(self, page_num: int) -> Optional[str]:
         """Capture the current page as an image"""
         if not self.driver:
             return None
@@ -290,36 +289,38 @@ class BrowserCapture:
 
             # Save image temporarily
             image = Image.open(BytesIO(screenshot_data))
-            img_path = os.path.join(self.output_dir, f"page_{page_num:03d}.png")
-            image.save(img_path)
+            temp_img_path = os.path.join(self.temp_dir, f"page_{page_num:03d}.png")
+            image.save(temp_img_path)
 
-            logger.debug(f"Saved page {page_num} screenshot to {img_path}")
-            return img_path
+            logger.debug(f"Saved page {page_num} screenshot to {temp_img_path}")
+            return temp_img_path
 
         except Exception as e:
             logger.error(f"Error capturing page {page_num}: {str(e)}")
             return None
 
-    def capture_pages(self, max_pages: int = 200) -> List[str]:
-        """Capture multiple pages"""
+    def extract_pages(self) -> List[Tuple[int, str]]:
+        """Extract pages using browser automation"""
         # Initialize WebDriver
         if not self.setup_driver(headless=True):
             logger.warning("Trying with GUI mode instead of headless")
             if not self.setup_driver(headless=False):
                 logger.error("Failed to initialize WebDriver in both modes")
+                self.update_progress(0, status="Failed to initialize browser")
                 return []
-
-        captured_images = []
 
         try:
             # Load the book URL
-            self.driver.get(self.url)
-            logger.info(f"Loaded URL: {self.url}")
+            self.update_progress(0, status="Loading book page...")
+            self.driver.get(self.book_url)
+            logger.info(f"Loaded book URL: {self.book_url}")
 
-            # Wait for the content to load
-            time.sleep(10)
+            # Wait for the book to load
+            self.update_progress(0, status="Waiting for book to load...")
+            time.sleep(15)
 
             # Try to navigate to the first page
+            self.update_progress(0, status="Locating first page...")
             try:
                 first_page_selectors = [
                     (By.XPATH, "//div[contains(@class, 'first')]"),
@@ -359,41 +360,50 @@ class BrowserCapture:
                     pass
 
             # Start capturing pages
+            pages = []
+            max_pages = 700  # Assume a maximum of 700 pages
+
             # First, verify we can capture at least one page
-            first_page = self.capture_screenshot(1)
+            self.update_progress(1, status="Capturing first page...")
+            first_page = self.capture_current_page(1)
             if not first_page:
                 logger.error("Failed to capture the first page")
+                self.update_progress(0, status="Failed to capture first page")
                 return []
 
-            captured_images.append(first_page)
+            pages.append((1, first_page))
 
             # Now capture remaining pages
             for page_num in range(2, max_pages + 1):
+                self.update_progress(page_num, status=f"Capturing page {page_num}...")
+
                 # Navigate to next page
                 if not self.navigate_to_next_page():
-                    logger.info(f"Reached the end of the content at page {page_num - 1}")
+                    logger.info(f"Reached the end of the book at page {page_num - 1}")
+                    self.update_progress(page_num - 1, page_num - 1, f"Completed! Captured {page_num - 1} pages")
                     break
 
                 # Wait for page to load
                 time.sleep(2)
 
                 # Capture the page
-                img_path = self.capture_screenshot(page_num)
+                img_path = self.capture_current_page(page_num)
                 if img_path:
-                    captured_images.append(img_path)
+                    pages.append((page_num, img_path))
 
-                    # Log progress
+                    # Log progress every 5 pages
                     if page_num % 5 == 0:
                         logger.info(f"Captured {page_num} pages so far")
                 else:
                     logger.warning(f"Failed to capture page {page_num}")
 
-            logger.info(f"Successfully captured {len(captured_images)} pages")
-            return captured_images
+            logger.info(f"Successfully extracted {len(pages)} pages using browser automation")
+            return pages
 
         except Exception as e:
-            logger.error(f"Error during capture: {str(e)}")
-            return captured_images
+            logger.error(f"Error in browser extraction: {str(e)}")
+            self.update_progress(0, status=f"Error during extraction: {str(e)}")
+            return []
 
         finally:
             # Clean up
@@ -404,42 +414,157 @@ class BrowserCapture:
                     pass
 
 
-class ScreenshotUtility:
-    """Main class for capturing screenshots"""
+class PdfGenerator:
+    """Generate PDF from extracted images"""
 
-    def __init__(self, url: str, output_dir: str = "screenshots", max_pages: int = 200):
+    def __init__(self, output_pdf: str, temp_dir: str, session_id: str):
+        self.output_pdf = output_pdf
+        self.temp_dir = temp_dir
+        self.session_id = session_id
+
+    def update_progress(self, status: str):
+        """Update the progress for this session"""
+        global download_progress
+        if self.session_id in download_progress:
+            download_progress[self.session_id]['status'] = status
+
+    def create_pdf(self, pages: List[Tuple[int, str]]) -> bool:
+        """Create PDF file from extracted pages"""
+        if not pages:
+            logger.error("No pages to create PDF")
+            self.update_progress("Error: No pages to create PDF")
+            return False
+
+        try:
+            self.update_progress(f"Creating PDF with {len(pages)} pages...")
+            logger.info(f"Creating PDF with {len(pages)} pages")
+
+            # Create PDF
+            c = canvas.Canvas(self.output_pdf, pagesize=letter)
+            page_width, page_height = letter
+
+            for i, (page_num, img_path) in enumerate(pages):
+                try:
+                    self.update_progress(f"Adding page {page_num} to PDF...")
+
+                    # Open image
+                    image = Image.open(img_path)
+
+                    # Calculate dimensions
+                    img_width, img_height = image.size
+                    aspect = img_height / img_width
+
+                    # Calculate dimensions to fit on PDF page with margins
+                    width = page_width - 50
+                    height = width * aspect
+
+                    # If image is too tall, scale it down
+                    if height > page_height - 50:
+                        height = page_height - 50
+                        width = height / aspect
+
+                    # Add image to PDF
+                    c.drawImage(img_path, 25, page_height - height - 25, width=width, height=height)
+                    c.showPage()
+
+                except Exception as e:
+                    logger.error(f"Error adding page {page_num} to PDF: {str(e)}")
+
+            # Save PDF
+            self.update_progress("Finalizing PDF...")
+            c.save()
+            logger.info(f"PDF successfully saved to {self.output_pdf}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error creating PDF: {str(e)}")
+            self.update_progress(f"Error creating PDF: {str(e)}")
+            return False
+
+
+class PubHTML5Downloader:
+    """Main class for downloading PubHTML5 books using screenshots only"""
+
+    def __init__(self, url: str, output_pdf: str, session_id: str):
         self.url = url
-        self.output_dir = output_dir
-        self.max_pages = max_pages
+        self.output_pdf = output_pdf
+        self.session_id = session_id
+        self.temp_dir = f"pubhtml5_temp_{session_id}"
 
-        # Create output directory if it doesn't exist
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
+        # Create temp directory if it doesn't exist
+        if not os.path.exists(self.temp_dir):
+            os.makedirs(self.temp_dir)
 
-    def capture(self) -> List[str]:
-        """Main method to capture screenshots"""
-        logger.info(f"Starting capture for URL: {self.url}")
+    def download(self) -> bool:
+        """Main method to download the book"""
+        global download_progress
 
-        browser_capture = BrowserCapture(self.url, self.output_dir)
-        captured_images = browser_capture.capture_pages(self.max_pages)
+        logger.info(f"Starting screenshot-based download for book: {self.url}")
 
-        if captured_images:
-            logger.info(f"Successfully captured {len(captured_images)} screenshots to {self.output_dir}")
-        else:
-            logger.error("Failed to capture any screenshots")
+        # Use browser automation to capture screenshots
+        logger.info("Using browser automation method to capture screenshots")
+        try:
+            extractor = BrowserExtractor(self.url, self.temp_dir, self.session_id)
+            pages = extractor.extract_pages()
+        except Exception as e:
+            logger.error(f"Error in browser automation: {str(e)}")
+            download_progress[self.session_id] = {
+                'current_page': 0,
+                'total_pages': 0,
+                'status': f"Error in browser automation: {str(e)}",
+                'completed': False,
+                'error': True
+            }
+            pages = []
 
-        return captured_images
+        # Create PDF if we have pages
+        if pages:
+            logger.info(f"Captured {len(pages)} pages, creating PDF")
+            pdf_generator = PdfGenerator(self.output_pdf, self.temp_dir, self.session_id)
+            if pdf_generator.create_pdf(pages):
+                logger.info(f"Book successfully downloaded and saved to {self.output_pdf}")
+                download_progress[self.session_id] = {
+                    'current_page': len(pages),
+                    'total_pages': len(pages),
+                    'status': f"PDF created successfully! {len(pages)} pages captured.",
+                    'completed': True,
+                    'error': False,
+                    'file_path': self.output_pdf
+                }
+                self._cleanup()
+                return True
+
+        logger.error("Screenshot extraction failed")
+        download_progress[self.session_id] = {
+            'current_page': 0,
+            'total_pages': 0,
+            'status': "Screenshot extraction failed",
+            'completed': False,
+            'error': True
+        }
+        self._cleanup()
+        return False
+
+    def _cleanup(self) -> None:
+        """Clean up temporary files"""
+        try:
+            for file in os.listdir(self.temp_dir):
+                file_path = os.path.join(self.temp_dir, file)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            os.rmdir(self.temp_dir)
+            logger.info("Cleaned up temporary files")
+        except Exception as e:
+            logger.warning(f"Error cleaning up temporary files: {str(e)}")
 
 
 def main():
     """Main function to run the script"""
-    parser = argparse.ArgumentParser(description='Capture screenshots from web content')
-    parser.add_argument('--url', type=str, required=True,
-                        help='URL of the content to capture')
-    parser.add_argument('--output-dir', type=str, default="screenshots",
-                        help='Output directory for screenshots')
-    parser.add_argument('--max-pages', type=int, default=200,
-                        help='Maximum number of pages to capture')
+    parser = argparse.ArgumentParser(description='Download PubHTML5 books using screenshots and convert to PDF')
+    parser.add_argument('--url', type=str, default="https://online.pubhtml5.com/xaqg/ilgg/",
+                        help='URL of the PubHTML5 book')
+    parser.add_argument('--output', type=str, default="pubhtml5_book.pdf",
+                        help='Output PDF filename')
     parser.add_argument('--verbose', action='store_true',
                         help='Enable verbose logging')
 
@@ -449,38 +574,27 @@ def main():
     if args.verbose:
         logger.setLevel(logging.DEBUG)
 
-    print(f"Screenshot Utility")
-    print(f"------------------------")
+    print(f"PubHTML5 Book Downloader (Screenshot Mode)")
+    print(f"------------------------------------------")
     print(f"URL: {args.url}")
-    print(f"Output Directory: {args.output_dir}")
-    print(f"Max Pages: {args.max_pages}")
+    print(f"Output: {args.output}")
     print()
 
-    # Start capture
-    utility = ScreenshotUtility(
-        args.url,
-        args.output_dir,
-        args.max_pages
-    )
+    # Start download
+    session_id = str(uuid.uuid4())
+    downloader = PubHTML5Downloader(args.url, args.output, session_id)
+    success = downloader.download()
 
-    captured_images = utility.capture()
-
-    if captured_images:
-        print(f"\nSuccess! Captured {len(captured_images)} screenshots to: {args.output_dir}")
-        return 0
+    if success:
+        print(f"\nSuccess! Book downloaded and saved to: {args.output}")
     else:
-        print(f"\nFailed to capture screenshots. Check the log file for details.")
-        return 1
+        print(f"\nFailed to download the book. Check the log file for details.")
+
+    return 0 if success else 1
 
 
 # Initialize Flask app
 app = Flask(__name__)
-
-
-# Function to handle the capture in a separate thread
-def capture_screenshots(url, output_dir):
-    utility = ScreenshotUtility(url, output_dir)
-    return utility.capture()
 
 
 @app.route('/')
@@ -491,7 +605,7 @@ def index():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Screenshot Utility</title>
+        <title>PubHTML5 Book Downloader</title>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
         <style>
             body {
@@ -545,33 +659,22 @@ def index():
                 font-size: 30px;
                 color: #28a745;
             }
-            .progress-container {
-                width: 100%;
-                background-color: #e0e0e0;
-                border-radius: 5px;
+            .progress-info {
                 margin: 20px 0;
-                height: 25px;
-                position: relative;
-            }
-            .progress-bar {
-                height: 100%;
-                background-color: #28a745;
+                padding: 15px;
+                background-color: #e9ecef;
                 border-radius: 5px;
-                width: 0%;
-                transition: width 1s;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                color: white;
-                font-weight: bold;
             }
-            .time-remaining {
-                margin-top: 10px;
-                color: #666;
-            }
-            .capture-status {
-                margin-top: 15px;
+            .page-counter {
+                font-size: 24px;
                 font-weight: bold;
+                color: #28a745;
+                margin-bottom: 10px;
+            }
+            .download-status {
+                margin: 15px 0;
+                font-weight: bold;
+                color: #333;
             }
             .completion-message {
                 display: none;
@@ -580,6 +683,21 @@ def index():
                 background-color: #d4edda;
                 color: #155724;
                 border-radius: 4px;
+            }
+            .download-button {
+                margin-top: 15px;
+                padding: 12px 25px;
+                background-color: #007bff;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 16px;
+                text-decoration: none;
+                display: inline-block;
+            }
+            .download-button:hover {
+                background-color: #0056b3;
             }
             .error-message {
                 display: none;
@@ -593,61 +711,63 @@ def index():
     </head>
     <body>
         <div class="container">
-            <h1>Web Screenshot Utility</h1>
-            <p>Enter the URL of the web content you want to capture</p>
+            <h1>PubHTML5 Book Downloader</h1>
+            <p>Enter the URL of the PubHTML5 book you want to download as PDF using screenshots</p>
 
             <div>
-                <input type="text" id="url" placeholder="Enter the URL" required>
-                <button id="captureBtn">Capture</button>
+                <input type="text" id="url" placeholder="Enter the book URL (e.g., https://online.pubhtml5.com/)" required>
+                <button id="downloadBtn">Download</button>
             </div>
 
             <div id="loader">
                 <div class="spinner">
                     <i class="fas fa-spinner fa-spin"></i>
                 </div>
-                <h3>Capturing Screenshots...</h3>
-                <p>Please wait while we process your request. This may take several minutes.</p>
+                <h3>Taking Screenshots...</h3>
+                <p>Please wait while we capture each page.</p>
 
-                <div class="progress-container">
-                    <div class="progress-bar" id="progressBar">0%</div>
+                <div class="progress-info">
+                    <div class="page-counter" id="pageCounter">Page 0</div>
+                    <div class="download-status" id="downloadStatus">Initializing...</div>
                 </div>
 
-                <div class="time-remaining" id="timeRemaining">Estimated time remaining: 8 minutes</div>
-                <div class="capture-status" id="captureStatus">Initializing capture...</div>
-
-                <p><b>Note:</b> Please do not close this window during the process.</p>
+                <p><b>Note:</b> Please do not close this window during the download process.</p>
             </div>
 
             <div class="completion-message" id="completionMessage">
-
+                <i class="fas fa-check-circle"></i> Download complete! Your PDF has been created.
+                <br><br>
+                <a href="#" id="downloadLink" class="download-button">
+                    <i class="fas fa-download"></i> Download PDF
+                </a>
             </div>
 
             <div class="error-message" id="errorMessage">
-                <i class="fas fa-exclamation-circle"></i> Error during capture. Please try again later.
+                <i class="fas fa-exclamation-circle"></i> <span id="errorText">Error during download. Please try again later.</span>
             </div>
         </div>
 
         <script>
-            document.getElementById('captureBtn').onclick = function() {
+            let sessionId = null;
+            let progressInterval = null;
+
+            document.getElementById('downloadBtn').onclick = function() {
                 const url = document.getElementById('url').value.trim();
 
                 if (!url) {
-                    alert("Please enter a valid URL");
+                    alert("Please enter a valid book URL");
                     return;
                 }
 
                 // Show loader and disable input/button
                 document.getElementById('loader').style.display = 'block';
                 document.getElementById('url').disabled = true;
-                document.getElementById('captureBtn').disabled = true;
+                document.getElementById('downloadBtn').disabled = true;
                 document.getElementById('completionMessage').style.display = 'none';
                 document.getElementById('errorMessage').style.display = 'none';
 
-                // Start progress simulation
-                simulateProgress();
-
-                // Send capture request
-                fetch('/capture', {
+                // Send download request
+                fetch('/download', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
@@ -656,89 +776,83 @@ def index():
                 })
                 .then(response => response.json())
                 .then(data => {
-                    // After response, show completion
-                    setTimeout(() => {
-                        document.getElementById('captureStatus').textContent = 'Capture complete!';
-                        document.getElementById('progressBar').style.width = '100%';
-                        document.getElementById('progressBar').textContent = '100%';
-                        document.getElementById('timeRemaining').textContent = 'Finished!';
-                        document.getElementById('completionMessage').style.display = 'block';
-
-                        // Re-enable controls
-                        document.getElementById('url').disabled = false;
-                        document.getElementById('captureBtn').disabled = false;
-                    }, 1000);
+                    if (data.session_id) {
+                        sessionId = data.session_id;
+                        // Start polling for progress
+                        startProgressPolling();
+                    } else {
+                        throw new Error(data.message || 'Unknown error');
+                    }
                 })
                 .catch(error => {
                     console.error('Error:', error);
                     document.getElementById('errorMessage').style.display = 'block';
+                    document.getElementById('errorText').textContent = error.message || 'Error starting download';
+                    document.getElementById('loader').style.display = 'none';
                     document.getElementById('url').disabled = false;
-                    document.getElementById('captureBtn').disabled = false;
+                    document.getElementById('downloadBtn').disabled = false;
                 });
             };
 
-            function simulateProgress() {
-                let progress = 0;
-                let remainingTime = 540; // 5 minutes in seconds
-                const totalTime = remainingTime;
+            function startProgressPolling() {
+                progressInterval = setInterval(() => {
+                    if (!sessionId) return;
 
-                const progressBar = document.getElementById('progressBar');
-                const timeRemainingElem = document.getElementById('timeRemaining');
-                const captureStatusElem = document.getElementById('captureStatus');
+                    fetch(`/progress/${sessionId}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            updateProgress(data);
 
-                const statusMessages = [
-                    "Initializing capture...",
-                    "Loading web page...",
-                    "Finding content elements...",
-                    "Capturing screenshot of page 1...",
-                    "Navigating to next page...",
-                    "Processing screenshots...",
-                    "Saving screenshots...",
-                    "Finalizing capture..."
-                ];
+                            if (data.completed || data.error) {
+                                clearInterval(progressInterval);
 
-                // Update every second
-                const interval = setInterval(() => {
-                    remainingTime--;
+                                if (data.completed) {
+                                    showCompletion();
+                                } else if (data.error) {
+                                    showError(data.status);
+                                }
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Progress polling error:', error);
+                        });
+                }, 2000); // Poll every 2 seconds
+            }
 
-                    // Calculate progress based on time elapsed
-                    // Make it non-linear to simulate real capture process
-                    const timeProgress = (totalTime - remainingTime) / totalTime;
+            function updateProgress(data) {
+                const pageCounter = document.getElementById('pageCounter');
+                const downloadStatus = document.getElementById('downloadStatus');
 
-                    // Ensure progress doesn't reach 100% during simulation
-                    progress = Math.min(Math.pow(timeProgress, 0.7) * 95, 95);
+                if (data.total_pages && data.total_pages > 0) {
+                    pageCounter.textContent = `Page ${data.current_page} of ${data.total_pages}`;
+                } else {
+                    pageCounter.textContent = `Page ${data.current_page}`;
+                }
 
-                    // Update progress bar
-                    progressBar.style.width = progress + '%';
-                    progressBar.textContent = Math.round(progress) + '%';
+                downloadStatus.textContent = data.status || 'Processing...';
+            }
 
-                    // Format remaining time
-                    const minutes = Math.floor(remainingTime / 60);
-                    const seconds = remainingTime % 60;
-                    timeRemainingElem.textContent = `Estimated time remaining: ${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+            function showCompletion() {
+                document.getElementById('loader').style.display = 'none';
+                document.getElementById('completionMessage').style.display = 'block';
 
-                    // Update status message
-                    if (timeProgress > 0.9) {
-                        captureStatusElem.textContent = statusMessages[7];
-                    } else if (timeProgress > 0.75) {
-                        captureStatusElem.textContent = statusMessages[6];
-                    } else if (timeProgress > 0.6) {
-                        captureStatusElem.textContent = statusMessages[5];
-                    } else if (timeProgress > 0.4) {
-                        captureStatusElem.textContent = statusMessages[4];
-                    } else if (timeProgress > 0.25) {
-                        captureStatusElem.textContent = statusMessages[3];
-                    } else if (timeProgress > 0.1) {
-                        captureStatusElem.textContent = statusMessages[2];
-                    } else if (timeProgress > 0.05) {
-                        captureStatusElem.textContent = statusMessages[1];
-                    }
+                // Set up download link
+                const downloadLink = document.getElementById('downloadLink');
+                downloadLink.href = `/download-file/${sessionId}`;
 
-                    // Stop if time is up
-                    if (remainingTime <= 0) {
-                        clearInterval(interval);
-                    }
-                }, 1000);
+                // Re-enable controls
+                document.getElementById('url').disabled = false;
+                document.getElementById('downloadBtn').disabled = false;
+            }
+
+            function showError(errorMessage) {
+                document.getElementById('loader').style.display = 'none';
+                document.getElementById('errorMessage').style.display = 'block';
+                document.getElementById('errorText').textContent = errorMessage || 'Error during download';
+
+                // Re-enable controls
+                document.getElementById('url').disabled = false;
+                document.getElementById('downloadBtn').disabled = false;
             }
         </script>
     </body>
@@ -746,17 +860,68 @@ def index():
     '''
 
 
-@app.route('/capture', methods=['POST'])
-def capture():
+@app.route('/download', methods=['POST'])
+def download():
     url = request.form['url']
-    output_dir = "screenshots"  # You can customize this as needed
+    session_id = str(uuid.uuid4())
+    output_pdf = f"pubhtml5_book_{session_id}.pdf"
 
-    # Start the capture in a separate thread
-    thread = Thread(target=capture_screenshots, args=(url, output_dir))
+    # Start the download in a separate thread
+    def download_task():
+        downloader = PubHTML5Downloader(url, output_pdf, session_id)
+        downloader.download()
+
+    thread = Thread(target=download_task)
     thread.start()
 
-    return jsonify({"message": "Screenshot capture started! Please check back later."})
+    return jsonify({"message": "Download started", "session_id": session_id})
+
+
+@app.route('/progress/<session_id>')
+def get_progress(session_id):
+    global download_progress
+
+    if session_id in download_progress:
+        return jsonify(download_progress[session_id])
+    else:
+        return jsonify({
+            'current_page': 0,
+            'total_pages': 0,
+            'status': 'Session not found',
+            'completed': False,
+            'error': True
+        })
+
+
+@app.route('/download-file/<session_id>')
+def download_file(session_id):
+    global download_progress
+
+    if session_id in download_progress and download_progress[session_id].get('completed'):
+        file_path = download_progress[session_id].get('file_path')
+        if file_path and os.path.exists(file_path):
+            try:
+                return send_file(
+                    file_path,
+                    as_attachment=True,
+                    download_name=f"pubhtml5_book_{session_id[:8]}.pdf",
+                    mimetype='application/pdf'
+                )
+            except Exception as e:
+                logger.error(f"Error sending file: {str(e)}")
+                return jsonify({"error": "File download failed"}), 500
+        else:
+            return jsonify({"error": "File not found"}), 404
+    else:
+        return jsonify({"error": "Download not completed or session not found"}), 404
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    if len(sys.argv) > 1 and sys.argv[1] != "run":
+        # Command line mode
+        main()
+    else:
+        # Flask web mode
+        print("Starting PubHTML5 Downloader Web Interface...")
+        print("Access the application at: http://localhost:5000")
+        app.run(debug=True, host='0.0.0.0', port=5000)
