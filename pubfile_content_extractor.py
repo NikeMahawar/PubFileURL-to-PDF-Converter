@@ -361,7 +361,7 @@ class BrowserExtractor:
 
             # Start capturing pages
             pages = []
-            max_pages = 700  # Assume a maximum of 700 pages
+            max_pages = 300
 
             # First, verify we can capture at least one page
             self.update_progress(1, status="Capturing first page...")
@@ -606,144 +606,408 @@ def index():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>PubHTML5 Book Downloader</title>
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
         <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
             body {
-                font-family: Arial, sans-serif;
-                background-color: #f4f4f4;
-                text-align: center;
-                padding: 50px;
-                max-width: 800px;
-                margin: 0 auto;
+                font-family: 'Poppins', sans-serif;
+                background: linear-gradient(135deg, #fce4ec 0%, #f8bbd9 50%, #f48fb1 100%);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
             }
+
             .container {
-                background-color: white;
-                border-radius: 8px;
-                padding: 30px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                background: rgba(255, 255, 255, 0.95);
+                backdrop-filter: blur(10px);
+                border-radius: 24px;
+                padding: 40px;
+                box-shadow: 0 20px 40px rgba(244, 143, 177, 0.3);
+                max-width: 600px;
+                width: 100%;
+                text-align: center;
+                border: 1px solid rgba(248, 187, 217, 0.3);
             }
+
+            .header {
+                margin-bottom: 30px;
+            }
+
+            .header h1 {
+                color: #ad1457;
+                font-size: 2.5rem;
+                font-weight: 700;
+                margin-bottom: 10px;
+                text-shadow: 0 2px 4px rgba(173, 20, 87, 0.1);
+            }
+
+            .header .subtitle {
+                color: #c2185b;
+                font-size: 1.1rem;
+                font-weight: 400;
+                line-height: 1.6;
+            }
+
+            .input-group {
+                margin: 30px 0;
+                position: relative;
+            }
+
+            .input-wrapper {
+                position: relative;
+                margin-bottom: 20px;
+            }
+
+            .input-icon {
+                position: absolute;
+                left: 20px;
+                top: 50%;
+                transform: translateY(-50%);
+                color: #f48fb1;
+                font-size: 1.2rem;
+                z-index: 2;
+            }
+
             input[type="text"] {
-                width: 80%;
-                padding: 12px;
-                margin: 15px 0;
-                border: 1px solid #ddd;
-                border-radius: 4px;
+                width: 100%;
+                padding: 18px 20px 18px 55px;
+                border: 2px solid #f8bbd9;
+                border-radius: 16px;
                 font-size: 16px;
+                font-family: 'Poppins', sans-serif;
+                background: rgba(252, 228, 236, 0.5);
+                color: #ad1457;
+                transition: all 0.3s ease;
+                outline: none;
             }
-            button {
-                padding: 12px 25px;
-                background-color: #28a745;
+
+            input[type="text"]:focus {
+                border-color: #f48fb1;
+                background: rgba(252, 228, 236, 0.8);
+                box-shadow: 0 0 0 4px rgba(244, 143, 177, 0.2);
+                transform: translateY(-2px);
+            }
+
+            input[type="text"]::placeholder {
+                color: #c2185b;
+                opacity: 0.7;
+            }
+
+            .download-btn {
+                background: linear-gradient(135deg, #f48fb1 0%, #f06292 100%);
                 color: white;
                 border: none;
-                border-radius: 4px;
+                padding: 18px 40px;
+                border-radius: 16px;
+                font-size: 18px;
+                font-weight: 600;
+                font-family: 'Poppins', sans-serif;
                 cursor: pointer;
-                font-size: 16px;
-                transition: background-color 0.3s;
+                transition: all 0.3s ease;
+                box-shadow: 0 8px 20px rgba(244, 143, 177, 0.4);
+                position: relative;
+                overflow: hidden;
             }
-            button:hover {
-                background-color: #218838;
+
+            .download-btn:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 12px 25px rgba(244, 143, 177, 0.5);
             }
-            button:disabled {
-                background-color: #95c9a2;
+
+            .download-btn:active {
+                transform: translateY(-1px);
+            }
+
+            .download-btn:disabled {
+                background: linear-gradient(135deg, #f8bbd9 0%, #f48fb1 100%);
                 cursor: not-allowed;
+                transform: none;
+                box-shadow: 0 4px 10px rgba(244, 143, 177, 0.2);
             }
+
+            .download-btn i {
+                margin-right: 10px;
+            }
+
             #loader {
                 display: none;
-                margin-top: 30px;
-                padding: 20px;
-                background-color: #f8f9fa;
-                border-radius: 8px;
+                margin-top: 40px;
+                padding: 30px;
+                background: linear-gradient(135deg, rgba(252, 228, 236, 0.9) 0%, rgba(248, 187, 217, 0.9) 100%);
+                border-radius: 20px;
+                border: 1px solid rgba(244, 143, 177, 0.3);
             }
+
             .spinner {
-                margin-bottom: 15px;
-                font-size: 30px;
-                color: #28a745;
+                margin-bottom: 20px;
+                font-size: 40px;
+                color: #f48fb1;
+                animation: spin 2s linear infinite;
             }
-            .progress-info {
-                margin: 20px 0;
-                padding: 15px;
-                background-color: #e9ecef;
-                border-radius: 5px;
+
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
             }
-            .page-counter {
-                font-size: 24px;
-                font-weight: bold;
-                color: #28a745;
+
+            .loader-title {
+                color: #ad1457;
+                font-size: 1.5rem;
+                font-weight: 600;
                 margin-bottom: 10px;
             }
+
+            .loader-subtitle {
+                color: #c2185b;
+                font-size: 1rem;
+                margin-bottom: 25px;
+            }
+
+            .progress-info {
+                margin: 25px 0;
+                padding: 20px;
+                background: rgba(255, 255, 255, 0.7);
+                border-radius: 16px;
+                border: 1px solid rgba(244, 143, 177, 0.2);
+            }
+
+            .page-counter {
+                font-size: 2rem;
+                font-weight: 700;
+                color: #ad1457;
+                margin-bottom: 10px;
+                text-shadow: 0 2px 4px rgba(173, 20, 87, 0.1);
+            }
+
             .download-status {
                 margin: 15px 0;
-                font-weight: bold;
-                color: #333;
+                font-weight: 500;
+                color: #c2185b;
+                font-size: 1.1rem;
             }
+
+            .note {
+                background: rgba(255, 255, 255, 0.8);
+                padding: 15px;
+                border-radius: 12px;
+                border-left: 4px solid #f48fb1;
+                margin-top: 20px;
+            }
+
+            .note strong {
+                color: #ad1457;
+            }
+
+            .note p {
+                color: #c2185b;
+                margin: 0;
+            }
+
             .completion-message {
                 display: none;
-                margin-top: 20px;
-                padding: 15px;
-                background-color: #d4edda;
-                color: #155724;
-                border-radius: 4px;
+                margin-top: 30px;
+                padding: 25px;
+                background: linear-gradient(135deg, rgba(200, 230, 201, 0.9) 0%, rgba(165, 214, 167, 0.9) 100%);
+                color: #2e7d32;
+                border-radius: 20px;
+                border: 1px solid rgba(76, 175, 80, 0.3);
             }
-            .download-button {
-                margin-top: 15px;
-                padding: 12px 25px;
-                background-color: #007bff;
+
+            .completion-message i {
+                font-size: 2rem;
+                margin-bottom: 15px;
+                color: #4caf50;
+            }
+
+            .completion-message h3 {
+                margin-bottom: 15px;
+                font-weight: 600;
+            }
+
+            .download-link {
+                margin-top: 20px;
+                padding: 15px 30px;
+                background: linear-gradient(135deg, #4caf50 0%, #66bb6a 100%);
                 color: white;
                 border: none;
-                border-radius: 4px;
+                border-radius: 12px;
                 cursor: pointer;
                 font-size: 16px;
+                font-weight: 600;
+                font-family: 'Poppins', sans-serif;
                 text-decoration: none;
                 display: inline-block;
+                transition: all 0.3s ease;
+                box-shadow: 0 6px 15px rgba(76, 175, 80, 0.3);
             }
-            .download-button:hover {
-                background-color: #0056b3;
+
+            .download-link:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 8px 20px rgba(76, 175, 80, 0.4);
             }
+
+            .download-link i {
+                margin-right: 8px;
+            }
+
             .error-message {
                 display: none;
-                margin-top: 20px;
-                padding: 15px;
-                background-color: #f8d7da;
-                color: #721c24;
-                border-radius: 4px;
+                margin-top: 30px;
+                padding: 25px;
+                background: linear-gradient(135deg, rgba(255, 235, 238, 0.9) 0%, rgba(255, 205, 210, 0.9) 100%);
+                color: #c62828;
+                border-radius: 20px;
+                border: 1px solid rgba(244, 67, 54, 0.3);
+            }
+
+            .error-message i {
+                font-size: 2rem;
+                margin-bottom: 15px;
+                color: #f44336;
+            }
+
+            .error-message h3 {
+                margin-bottom: 10px;
+                font-weight: 600;
+            }
+
+            .floating-shapes {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                pointer-events: none;
+                z-index: -1;
+            }
+
+            .shape {
+                position: absolute;
+                background: rgba(248, 187, 217, 0.1);
+                border-radius: 50%;
+                animation: float 6s ease-in-out infinite;
+            }
+
+            .shape:nth-child(1) {
+                width: 80px;
+                height: 80px;
+                top: 20%;
+                left: 10%;
+                animation-delay: 0s;
+            }
+
+            .shape:nth-child(2) {
+                width: 120px;
+                height: 120px;
+                top: 60%;
+                right: 10%;
+                animation-delay: 2s;
+            }
+
+            .shape:nth-child(3) {
+                width: 60px;
+                height: 60px;
+                bottom: 20%;
+                left: 20%;
+                animation-delay: 4s;
+            }
+
+            @keyframes float {
+                0%, 100% { transform: translateY(0px) rotate(0deg); }
+                50% { transform: translateY(-20px) rotate(180deg); }
+            }
+
+            @media (max-width: 768px) {
+                .container {
+                    padding: 30px 20px;
+                    margin: 10px;
+                }
+
+                .header h1 {
+                    font-size: 2rem;
+                }
+
+                .header .subtitle {
+                    font-size: 1rem;
+                }
+
+                input[type="text"] {
+                    padding: 16px 18px 16px 50px;
+                    font-size: 15px;
+                }
+
+                .download-btn {
+                    padding: 16px 30px;
+                    font-size: 16px;
+                }
+
+                .page-counter {
+                    font-size: 1.5rem;
+                }
             }
         </style>
     </head>
     <body>
-        <div class="container">
-            <h1>PubHTML5 Book Downloader</h1>
-            <p>Enter the URL of the PubHTML5 book you want to download as PDF using screenshots</p>
+        <div class="floating-shapes">
+            <div class="shape"></div>
+            <div class="shape"></div>
+            <div class="shape"></div>
+        </div>
 
-            <div>
-                <input type="text" id="url" placeholder="Enter the book URL (e.g., https://online.pubhtml5.com/)" required>
-                <button id="downloadBtn">Download</button>
+        <div class="container">
+            <div class="header">
+                <h1><i class="fas fa-book-open"></i> PubHTML5 Downloader</h1>
+                <p class="subtitle">Transform your favorite PubHTML5 books into beautiful PDFs with our advanced screenshot technology</p>
+            </div>
+
+            <div class="input-group">
+                <div class="input-wrapper">
+                    <i class="fas fa-link input-icon"></i>
+                    <input type="text" id="url" placeholder="Paste your PubHTML5 book URL here..." required>
+                </div>
+                <button class="download-btn" id="downloadBtn">
+                    <i class="fas fa-download"></i>Start Download
+                </button>
             </div>
 
             <div id="loader">
                 <div class="spinner">
-                    <i class="fas fa-spinner fa-spin"></i>
+                    <i class="fas fa-camera"></i>
                 </div>
-                <h3>Taking Screenshots...</h3>
-                <p>Please wait while we capture each page.</p>
+                <h3 class="loader-title">Capturing Pages...</h3>
+                <p class="loader-subtitle">Our advanced technology is taking high-quality screenshots of each page</p>
 
                 <div class="progress-info">
                     <div class="page-counter" id="pageCounter">Page 0</div>
                     <div class="download-status" id="downloadStatus">Initializing...</div>
                 </div>
 
-                <p><b>Note:</b> Please do not close this window during the download process.</p>
+                <div class="note">
+                    <p><strong>Please Note:</strong> Keep this window open during the download process for the best results.</p>
+                </div>
             </div>
 
             <div class="completion-message" id="completionMessage">
-                <i class="fas fa-check-circle"></i> Download complete! Your PDF has been created.
-                <br><br>
-                <a href="#" id="downloadLink" class="download-button">
-                    <i class="fas fa-download"></i> Download PDF
+                <i class="fas fa-check-circle"></i>
+                <h3>Download Complete!</h3>
+                <p>Your PDF has been successfully created and is ready for download.</p>
+                <a href="#" id="downloadLink" class="download-link">
+                    <i class="fas fa-file-pdf"></i> Download PDF
                 </a>
             </div>
 
             <div class="error-message" id="errorMessage">
-                <i class="fas fa-exclamation-circle"></i> <span id="errorText">Error during download. Please try again later.</span>
+                <i class="fas fa-exclamation-triangle"></i>
+                <h3>Oops! Something went wrong</h3>
+                <p id="errorText">We encountered an error during the download process. Please try again.</p>
             </div>
         </div>
 
@@ -854,6 +1118,13 @@ def index():
                 document.getElementById('url').disabled = false;
                 document.getElementById('downloadBtn').disabled = false;
             }
+
+            // Add enter key support for input
+            document.getElementById('url').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    document.getElementById('downloadBtn').click();
+                }
+            });
         </script>
     </body>
     </html>
